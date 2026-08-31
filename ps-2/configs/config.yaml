@@ -1,0 +1,95 @@
+project:
+  name: adaptive-lidar
+  version: "0.1.0"
+  description: "Adaptive Variable-Resolution 2.5D LiDAR Mapping"
+
+data:
+  source: synthetic
+  dataset_path: data/
+  output_path: outputs/
+
+preprocessing:
+  enabled: true
+  remove_invalid: true
+  min_range: 0.5
+  max_range: 25.0
+  use_2d_range: false
+  min_z: -2.0
+  max_z: 4.0
+  voxel_downsample:
+    enabled: false
+    voxel_size: 0.1
+
+mapping:
+  resolution: 0.2
+  min_x: -25.0
+  max_x: 25.0
+  min_y: -25.0
+  max_y: 25.0
+  auto_bounds: false
+  multi_resolution:
+    enabled: true
+    levels:
+      coarse: 0.50
+      medium: 0.25
+      fine: 0.10
+      ultra_fine: 0.05
+
+terrain:
+  enabled: true
+  window_size: 3
+  calculate_roughness: true
+  calculate_slope: true
+  calculate_elevation_range: true
+  min_valid_neighbors: 1
+
+priority:
+  enabled: true
+  thresholds:
+    ultra_fine:
+      roughness: 0.25
+      slope: 1.50
+      elevation_range: 0.80
+    fine:
+      roughness: 0.08
+      slope: 0.50
+      elevation_range: 0.30
+    medium:
+      roughness: 0.02
+      slope: 0.15
+      elevation_range: 0.10
+
+resolution:
+  enabled: true
+  min_cell_size: 0.05
+  max_cell_size: 0.40
+
+refinement:
+  enabled: true
+
+novelty:
+  enabled: false
+
+temporal:
+  enabled: true
+  elevation_change_threshold: 0.15
+  min_points_per_cell: 1
+  reuse_stable_regions: true
+
+benchmark:
+  enabled: true
+  benchmark_runs: 3
+  warmup_runs: 1
+  include_multires: true
+
+budget:
+  enabled: true
+  max_memory_mb: 25.0
+  max_allocated_cells: 500000
+  max_compute_cost: 100000.0
+  preserve_high_priority_regions: true
+  allow_resolution_downgrade: true
+  temporal_change_weight: 1.5
+
+dashboard:
+  enabled: false
