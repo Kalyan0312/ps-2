@@ -1,0 +1,2 @@
+[tool.vercel]
+entrypoint = "ps-2.backend.api.main:app"
