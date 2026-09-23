@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LiDAR Environment Perception &amp; Adaptive Mapping</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- ── HEADER ────────────────────────────────────────────────── -->
+    <header class="header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1 class="brand-title">Adaptive Variable-Resolution 2.5D LiDAR Mapping</h1>
+          <p class="brand-subtitle">LiDAR Environment Perception &amp; Adaptive Variable-Resolution Real-Time Pipeline</p>
+        </div>
+      </div>
+
+      <div class="header-status">
+        <div id="ws-status-badge" class="badge badge-disconnected">
+          <span class="dot"></span>
+          <span class="status-label">WS Disconnected</span>
+        </div>
+        <div id="sim-status-badge" class="badge badge-idle">
+          <span class="dot"></span>
+          <span class="status-label">Replay Idle</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ── DIAGNOSTICS BANNER (hidden by default) ───────────────── -->
+    <div id="diagnostics-banner" class="diagnostics-banner hidden">
+      <span class="diag-icon">⚠️</span>
+      <span id="diag-message" class="diag-text">Connecting to backend server...</span>
+    </div>
+
+    <!-- ── TOP CONTROL & PLAYBACK TOOLBAR ────────────────────────── -->
+    <section class="control-bar">
+      <!-- Main transport controls -->
+      <div class="control-group">
+        <button id="btn-play-pause" class="btn btn-primary" title="Start / Pause dataset frame replay">
+          <svg class="icon-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          <span id="play-pause-label">Play</span>
+        </button>
+        <button id="btn-reset" class="btn btn-secondary" title="Reset replay to frame 0">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>
+          Reset
+        </button>
+      </div>
+
+      <!-- Frame scrubber and step controls -->
+      <div class="control-group scrubber-group">
+        <span class="control-label">Frame:</span>
+        <div class="step-btn-group">
+          <button id="btn-step-prev" class="btn btn-secondary btn-icon btn-sm" title="Step back one frame">‹</button>
+          <button id="btn-step-next" class="btn btn-secondary btn-icon btn-sm" title="Step forward one frame">›</button>
+        </div>
+        <div class="slider-wrapper">
+          <input type="range" id="frame-slider" min="0" max="5" value="0" step="1" class="frame-slider" title="Drag to scrub across frames">
+        </div>
+        <span id="scrubber-counter" class="mono font-bold scrubber-val"><span id="curr-frame-display">0</span> / <span id="total-frames-display">5</span></span>
+      </div>
+
+      <!-- Speed pills -->
+      <div class="control-group">
+        <span class="control-label">Speed:</span>
+        <div class="pill-selector">
+          <button id="btn-speed-01" class="speed-pill">0.1x</button>
+          <button id="btn-speed-025" class="speed-pill active">0.25x</button>
+          <button id="btn-speed-05"  class="speed-pill">0.5x</button>
+          <button id="btn-speed-1"   class="speed-pill">1.0x</button>
+        </div>
+      </div>
+
+      <!-- Legacy compat hidden controls for test assertions -->
+      <button id="btn-start" class="hidden-element"></button>
+      <button id="btn-stop" class="hidden-element"></button>
+      <input type="range" id="fps-range" min="1" max="60" value="10" class="hidden-element">
+    </section>
+
+    <!-- ── TOP SUMMARY STRIP ──────────────────────────────────────── -->
+    <section class="summary-strip">
+      <div class="summary-card" id="sc-frame">
+        <span class="summary-icon">🎞</span>
+        <div class="summary-body">
+          <span class="summary-label">Current Frame</span>
+          <span id="m-frame-id" class="summary-value mono">0</span>
+        </div>
+      </div>
+      <div class="summary-card" id="sc-cells">
+        <span class="summary-icon">⬛</span>
+        <div class="summary-body">
+          <span class="summary-label">Represented Cells</span>
+          <span id="sum-cell-count" class="summary-value mono highlight">0</span>
+        </div>
+      </div>
+      <div class="summary-card" id="sc-latency">
+        <span class="summary-icon">⏱</span>
+        <div class="summary-body">
+          <span class="summary-label">Pipeline Latency</span>
+          <span id="m-latency" class="summary-value mono">0.0 <small>ms</small></span>
+        </div>
+      </div>
+      <div class="summary-card" id="sc-fps">
+        <span class="summary-icon">📡</span>
+        <div class="summary-body">
+          <span class="summary-label">Throughput</span>
+          <span id="live-fps-badge" class="summary-value mono">0.0 FPS</span>
+        </div>
+      </div>
+      <div class="summary-card" id="sc-mapstatus">
+        <span class="summary-icon">🗺</span>
+        <div class="summary-body">
+          <span class="summary-label">Map Status</span>
+          <span id="map-status-pill" class="summary-value map-status-val">STANDBY</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 3-COLUMN MAIN CONTENT GRID ─────────────────────────────── -->
+    <main class="main-grid-3col">
+
+      <!-- ════════════════════════════════════════════════════════════
+           COLUMN 1 (LEFT ~42%): EXISTING TOP-DOWN LiDAR MAP — UNCHANGED
+           ════════════════════════════════════════════════════════════ -->
+      <div class="col-left">
+
+        <!-- MAP CARD — DO NOT MODIFY RENDERING ──────────────────────── -->
+        <div class="card card-map">
+          <div class="card-header flex-between">
+            <div class="header-left">
+              <div>
+                <h2 class="card-title">Top-Down Ego-Centric LiDAR Map</h2>
+                <p class="card-subtitle">Sensor origin at (0,0) · colour encodes <span id="color-mode-label" class="highlight">Resolution Tier</span></p>
+              </div>
+              <span id="map-frame-badge" class="card-pill">No Map</span>
+            </div>
+            <div class="map-toolbar">
+              <button id="btn-refresh-map" class="btn btn-sm btn-secondary" title="Fetch latest map snapshot">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                Refresh
+              </button>
+              <button id="btn-fit-map" class="btn btn-sm btn-secondary" title="Fit camera to bounds">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+                Fit
+              </button>
+              <button id="btn-zoom-in"  class="btn btn-sm btn-icon" title="Zoom In">+</button>
+              <button id="btn-zoom-out" class="btn btn-sm btn-icon" title="Zoom Out">−</button>
+              <button id="btn-toggle-color" class="btn btn-sm btn-accent" title="Toggle Resolution / Elevation colour mode">
+                Color: Resolution
+              </button>
+            </div>
+          </div>
+
+          <!-- MAP LAYER TOGGLE STRIP -->
+          <div class="layer-control-strip">
+            <span class="layer-strip-title">Map Layers:</span>
+            <button id="layer-adaptive-map" class="layer-pill active" title="Toggle Adaptive 2.5D cells">Adaptive Map</button>
+            <button id="layer-points"       class="layer-pill active" title="Toggle LiDAR raw points">LiDAR Points</button>
+            <button id="layer-terrain-risk" class="layer-pill active" title="Toggle Terrain Risk heatmap overlay">Terrain</button>
+            <button id="layer-candidate-obs" class="layer-pill active" title="Toggle Candidate Obstacle highlights">Candidate Obstacles</button>
+            <button id="layer-changes"      class="layer-pill active" title="Toggle Temporal Change markers">Changes</button>
+          </div>
+
+          <div class="canvas-wrapper">
+            <canvas id="map-canvas" width="1200" height="640"></canvas>
+
+            <!-- Non-blocking status pill — shown when no data yet, not a full overlay -->
+            <div id="map-empty-overlay" class="map-empty-overlay">
+              <div class="empty-content">
+                <div class="radar-scan-anim">
+                  <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10" stroke-dasharray="2 3" opacity="0.4"></circle>
+                    <circle cx="12" cy="12" r="6" opacity="0.6"></circle>
+                    <circle cx="12" cy="12" r="2"></circle>
+                    <line x1="12" y1="2" x2="12" y2="22" stroke-dasharray="2 2" opacity="0.3"></line>
+                    <line x1="2" y1="12" x2="22" y2="12" stroke-dasharray="2 2" opacity="0.3"></line>
+                  </svg>
+                  <div class="radar-ping"></div>
+                </div>
+                <p class="empty-text">Awaiting LiDAR Replay Start</p>
+                <p class="empty-subtext">Press <strong>Play</strong> above to begin frame replay — the map will render live.</p>
+              </div>
+            </div>
+
+            <div id="map-hover-tooltip" class="map-hover-tooltip hidden"></div>
+          </div>
+
+          <!-- MAP LEGEND ─────────────────────────────────────────── -->
+          <div class="map-legend-bar" id="map-legend-bar">
+            <!-- Elevation gradient section -->
+            <div class="legend-elevation-wrap" id="legend-elevation-wrap">
+              <span class="legend-title">Elevation</span>
+              <span class="legend-scale-val mono" id="legend-min-z">0.0m</span>
+              <div class="legend-gradient-bar" id="legend-gradient-bar"></div>
+              <span class="legend-scale-val mono" id="legend-max-z">+3.5m</span>
+            </div>
+
+            <div class="legend-divider"></div>
+
+            <!-- Resolution tiers section -->
+            <div class="legend-tiers-wrap" id="legend-tiers-wrap">
+              <div class="legend-title">Resolution Tiers</div>
+              <div class="legend-item"><span class="legend-color color-coarse"></span> Coarse — 0.50 m</div>
+              <div class="legend-item"><span class="legend-color color-medium"></span> Medium — 0.25 m</div>
+              <div class="legend-item"><span class="legend-color color-fine"></span> Fine — 0.10 m</div>
+              <div class="legend-item"><span class="legend-color color-ultrafine"></span> Ultra Fine — 0.05 m</div>
+            </div>
+
+            <div class="legend-divider"></div>
+
+            <!-- Ego / sensor marker section -->
+            <div class="legend-ego-wrap">
+              <div class="legend-title">Ego / Sensor</div>
+              <div class="legend-item">
+                <span class="ego-legend-marker">▲ ●</span>
+                <span id="ego-position-label">Sensor @ (0, 0)</span>
+              </div>
+            </div>
+
+            <div class="legend-divider"></div>
+
+            <!-- Candidate Obstacle legend item -->
+            <div class="legend-cand-wrap">
+              <div class="legend-title">Obstacle Hazard</div>
+              <div class="legend-item">
+                <span class="cand-legend-swatch"></span>
+                <span>Candidate Region</span>
+              </div>
+            </div>
+
+            <div class="legend-meta ml-auto">
+              <span id="map-cell-count" class="mono font-bold">0</span> cells rendered
+            </div>
+          </div>
+        </div><!-- /card-map -->
+
+      </div><!-- /col-left -->
+
+      <!-- ════════════════════════════════════════════════════════════
+           COLUMN 2 (MIDDLE ~33%): ENVIRONMENT OVERVIEW + ADAPTIVE ALLOCATION
+           ════════════════════════════════════════════════════════════ -->
+      <div class="col-mid">
+
+        <!-- 1. ENVIRONMENT OVERVIEW MAP (Secondary Bird's-Eye View) ── -->
+        <div class="card card-overview">
+          <div class="card-header flex-between">
+            <div class="header-left">
+              <div>
+                <h2 class="card-title">🌍 Environment Overview</h2>
+                <p class="card-subtitle">Bird's-eye obstacle positions relative to vehicle (0,0)</p>
+              </div>
+            </div>
+            <button id="btn-fit-overview" class="btn btn-sm btn-secondary" title="Reset overview view">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+              Fit
+            </button>
+          </div>
+          <div class="canvas-wrapper overview-canvas-wrapper">
+            <canvas id="overview-canvas" width="840" height="480"></canvas>
+            <div id="overview-empty-overlay" class="map-empty-overlay">
+              <div class="empty-content">
+                <div class="radar-scan-anim">
+                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10" stroke-dasharray="2 3" opacity="0.4"></circle>
+                    <circle cx="12" cy="12" r="5" opacity="0.6"></circle>
+                    <circle cx="12" cy="12" r="1"></circle>
+                  </svg>
+                </div>
+                <p class="empty-text">Awaiting LiDAR Data</p>
+                <p class="empty-subtext">Play replay to view surrounding obstacles</p>
+              </div>
+            </div>
+          </div>
+          <div class="overview-legend-bar">
+            <div class="legend-item"><span class="overview-ego-dot"></span> Ego Vehicle (0,0)</div>
+            <div class="legend-item"><span class="overview-obs-dot"></span> Candidate Obstacles</div>
+            <div class="legend-item"><span class="overview-pts-dot"></span> LiDAR Points</div>
+            <div class="legend-item"><span class="overview-range-dash"></span> 25m Range</div>
+          </div>
+        </div><!-- /card-overview -->
+
+        <!-- 2. ADAPTIVE SPATIAL RESOLUTION ALLOCATION ───────────── -->
+        <div class="card card-allocation">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">📐 Adaptive Spatial Resolution</h2>
+              <p class="card-subtitle">Coarser (0.50m) → open/flat · Finer (0.05m) → complex/obstacle</p>
+            </div>
+            <span class="card-pill pill-o1">Live Map Output</span>
+          </div>
+
+          <div id="alloc-no-data" class="alloc-no-data hidden">
+            <span class="text-muted">No map data — press Play or step through frames.</span>
+          </div>
+
+          <div id="alloc-content">
+            <div class="tier-bars-container">
+              <div class="tier-card tier-coarse">
+                <div class="tier-info">
+                  <span class="tier-name">Coarse <span class="tier-res">(0.50 m)</span></span>
+                  <span id="pct-coarse" class="tier-pct">—</span>
+                </div>
+                <div class="tier-bar-bg"><div id="bar-tier-coarse" class="tier-bar-fill fill-coarse" style="width:0%"></div></div>
+                <span id="cnt-coarse" class="tier-cells">No data</span>
+              </div>
+
+              <div class="tier-card tier-medium">
+                <div class="tier-info">
+                  <span class="tier-name">Medium <span class="tier-res">(0.25 m)</span></span>
+                  <span id="pct-medium" class="tier-pct">—</span>
+                </div>
+                <div class="tier-bar-bg"><div id="bar-tier-medium" class="tier-bar-fill fill-medium" style="width:0%"></div></div>
+                <span id="cnt-medium" class="tier-cells">No data</span>
+              </div>
+
+              <div class="tier-card tier-fine">
+                <div class="tier-info">
+                  <span class="tier-name">Fine <span class="tier-res">(0.10 m)</span></span>
+                  <span id="pct-fine" class="tier-pct">—</span>
+                </div>
+                <div class="tier-bar-bg"><div id="bar-tier-fine" class="tier-bar-fill fill-fine" style="width:0%"></div></div>
+                <span id="cnt-fine" class="tier-cells">No data</span>
+              </div>
+
+              <div class="tier-card tier-ultrafine">
+                <div class="tier-info">
+                  <span class="tier-name">Ultra-Fine <span class="tier-res">(0.05 m)</span></span>
+                  <span id="pct-ultrafine" class="tier-pct">—</span>
+                </div>
+                <div class="tier-bar-bg"><div id="bar-tier-ultrafine" class="tier-bar-fill fill-ultrafine" style="width:0%"></div></div>
+                <span id="cnt-ultrafine" class="tier-cells">No data</span>
+              </div>
+            </div>
+
+            <div class="alloc-total-row">
+              <span class="total-label">Total Represented Cells:</span>
+              <span id="alloc-total-cells" class="total-val mono highlight font-bold">0</span>
+              <span class="total-note text-muted">(Uniform ultra-fine equivalent would require ~250,000 cells)</span>
+            </div>
+          </div>
+        </div><!-- /card-allocation -->
+
+      </div><!-- /col-mid -->
+
+      <!-- ════════════════════════════════════════════════════════════
+           COLUMN 3 (RIGHT ~25%): PERCEPTION & DIAGNOSTICS METRICS
+           ════════════════════════════════════════════════════════════ -->
+      <div class="col-right">
+
+        <!-- 1. VEHICLE / SENSOR STATUS ─────────────────────────── -->
+        <div class="card card-vehicle">
+          <div class="card-header">
+            <h2 class="card-title">🚗 Vehicle / Sensor Status</h2>
+            <span class="card-pill pill-subtle">Ego Origin</span>
+          </div>
+          <div class="vehicle-metrics-grid">
+            <div class="vm-box">
+              <span class="vm-label">Sensor Position</span>
+              <span id="vm-sensor-pos" class="vm-val mono highlight">(0.00, 0.00) m</span>
+            </div>
+            <div class="vm-box">
+              <span class="vm-label">Heading</span>
+              <span id="vm-heading" class="vm-val mono">0° (North)</span>
+            </div>
+            <div class="vm-box">
+              <span class="vm-label">Current Frame</span>
+              <span class="vm-val mono"><span id="sim-frame-idx">0</span> / <span id="sim-frame-total">5</span></span>
+            </div>
+            <div class="vm-box">
+              <span class="vm-label">Replay State</span>
+              <span id="sim-playback-state" class="vm-val mono highlight">STOPPED</span>
+            </div>
+            <div class="vm-box">
+              <span class="vm-label">Playback Mode</span>
+              <span id="vm-playback-mode" class="vm-val mono">Recorded Replay</span>
+            </div>
+            <div class="vm-box">
+              <span class="vm-label">Speed</span>
+              <span id="sim-playback-speed" class="vm-val mono">0.25x</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. WHAT LiDAR SEES ──────────────────────────────────── -->
+        <div class="card card-environment">
+          <div class="card-header">
+            <h2 class="card-title">👁 What LiDAR Sees</h2>
+            <span class="card-pill pill-subtle">Point Cloud Derived</span>
+          </div>
+          <div class="env-metrics-grid">
+            <div class="env-metric-box">
+              <span class="env-label">Total LiDAR Points</span>
+              <span id="m-env-raw-points" class="env-val mono">0</span>
+            </div>
+            <div class="env-metric-box">
+              <span class="env-label">Occupied Regions</span>
+              <span id="m-env-rep-cells" class="env-val mono">0</span>
+            </div>
+            <div class="env-metric-box">
+              <span class="env-label">Elevation Range</span>
+              <span id="m-env-elev-range" class="env-val mono" style="font-size:0.85rem">— m → — m</span>
+            </div>
+            <div class="env-metric-box">
+              <span class="env-label">LiDAR Ingestion</span>
+              <span class="env-val mono" style="font-size:0.82rem"><span id="sim-lidar-pts">0</span> pts → <span id="sim-map-cells">0</span> cells</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. DETECTED OBSTACLES ───────────────────────────────── -->
+        <div class="card card-status-summary">
+          <div class="card-header">
+            <h2 class="card-title">⚠️ Detected Obstacles</h2>
+            <span id="status-mode-pill" class="card-pill">RECORDED REPLAY</span>
+          </div>
+          <div class="sim-status-list">
+            <div class="sim-status-item">
+              <span class="sim-label">Candidate Obstacles</span>
+              <span id="m-env-cand-obs" class="sim-val mono highlight">0</span>
+            </div>
+            <div class="sim-status-item">
+              <span class="sim-label">Terrain Risk Level</span>
+              <span id="m-env-terrain-risk" class="env-risk-badge risk-low">LOW</span>
+            </div>
+            <div class="sim-status-item">
+              <span class="sim-label">Adaptive Breakdown</span>
+              <span class="sim-val mono" style="font-size:0.8rem">C:<span id="sim-tier-c">0</span> M:<span id="sim-tier-m">0</span> F:<span id="sim-tier-f">0</span> UF:<span id="sim-tier-uf">0</span></span>
+            </div>
+            <div class="sim-status-item">
+              <span class="sim-label">Candidate Regions</span>
+              <span class="sim-val mono"><span id="sim-cand-obs">0</span> (<span id="sim-terrain-risk">LOW</span> risk)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. PERFORMANCE ──────────────────────────────────────── -->
+        <div class="card card-performance">
+          <div class="card-header">
+            <h2 class="card-title">⚡ Performance</h2>
+            <span class="card-pill pill-subtle">Stage Timings</span>
+          </div>
+          <div class="perf-top-row">
+            <div class="perf-kpi">
+              <span class="perf-kpi-val mono" id="sim-latency">0.0</span>
+              <span class="perf-kpi-unit">ms latency</span>
+            </div>
+            <div class="perf-kpi">
+              <span class="perf-kpi-val mono" id="sim-fps">0.0</span>
+              <span class="perf-kpi-unit">FPS</span>
+            </div>
+          </div>
+          <div class="stage-timings-list">
+            <div class="timing-row">
+              <span class="stage-name">1. Preprocessing</span>
+              <span id="t-preproc" class="stage-time mono">0.0 ms</span>
+            </div>
+            <div class="timing-row">
+              <span class="stage-name">2. Base Grid Mapping</span>
+              <span id="t-basemap" class="stage-time mono">0.0 ms</span>
+            </div>
+            <div class="timing-row">
+              <span class="stage-name">3. Terrain Analysis</span>
+              <span id="t-terrain" class="stage-time mono">0.0 ms</span>
+            </div>
+            <div class="timing-row">
+              <span class="stage-name">4. Resolution Selection</span>
+              <span id="t-resselect" class="stage-time mono">0.0 ms</span>
+            </div>
+            <div class="timing-row">
+              <span class="stage-name">5. Adaptive Map Update</span>
+              <span id="t-mapupdate" class="stage-time mono">0.0 ms</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. TEMPORAL CHANGE DETECTION ───────────────────────── -->
+        <div class="card card-temporal">
+          <div class="card-header">
+            <h2 class="card-title">🕐 Temporal Change Detection</h2>
+            <span class="card-pill pill-subtle">Frame-to-Frame</span>
+          </div>
+          <div class="temporal-stats-grid">
+            <div class="temp-stat-box stat-new">
+              <span class="stat-label">NEWLY OBSERVED</span>
+              <span id="m-temp-new" class="stat-val mono">0</span>
+            </div>
+            <div class="temp-stat-box stat-changed">
+              <span class="stat-label">CHANGED</span>
+              <span id="m-temp-changed" class="stat-val mono">0</span>
+            </div>
+            <div class="temp-stat-box stat-unchanged">
+              <span class="stat-label">UNCHANGED</span>
+              <span id="m-temp-unchanged" class="stat-val mono">0</span>
+            </div>
+            <div class="temp-stat-box stat-removed">
+              <span class="stat-label">REMOVED</span>
+              <span id="m-temp-removed" class="stat-val mono">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 6. SPATIAL RANGE QUERY ──────────────────────────────── -->
+        <div class="card card-query">
+          <div class="card-header">
+            <h2 class="card-title">🔍 O(1) Spatial Range Query</h2>
+            <span class="card-pill pill-subtle">Click map</span>
+          </div>
+          <div class="query-form">
+            <div class="input-row">
+              <label for="qx">X:</label>
+              <input type="number" id="qx" value="0.0" step="0.1">
+              <label for="qy">Y:</label>
+              <input type="number" id="qy" value="0.0" step="0.1">
+              <button id="btn-query" class="btn btn-sm btn-primary">Query</button>
+            </div>
+            <div id="query-result-box" class="query-result-box text-muted">
+              Click anywhere on the LiDAR map to inspect O(1) cell attributes.
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /col-right -->
+    </main>
+
+    <!-- ── FOOTER PIPELINE STORY ─────────────────────────────────── -->
+    <footer class="pipeline-story-footer">
+      <div class="story-title">PIPELINE FLOW:</div>
+      <div class="story-steps">
+        <div class="story-step"><span class="step-num">1</span> LiDAR Frame</div>
+        <div class="story-arrow">→</div>
+        <div class="story-step"><span class="step-num">2</span> Environment Observed</div>
+        <div class="story-arrow">→</div>
+        <div class="story-step"><span class="step-num">3</span> Terrain Complexity</div>
+        <div class="story-arrow">→</div>
+        <div class="story-step"><span class="step-num">4</span> Risk Assessment</div>
+        <div class="story-arrow">→</div>
+        <div class="story-step"><span class="step-num">5</span> Adaptive Resolution</div>
+        <div class="story-arrow">→</div>
+        <div class="story-step step-highlight"><span class="step-num">6</span> 2.5D Multi-Res Map</div>
+      </div>
+    </footer>
+  </div><!-- /app-container -->
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

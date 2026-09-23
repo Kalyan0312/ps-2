@@ -292,3 +292,88 @@ class AdaptiveMap25D:
             "uniform_fine_total_cells": uniform_fine_cells,
             "uniform_fine_resolution_m": fine_res,
         }
+
+    def to_snapshot_dict(self) -> Dict[str, Any]:
+        """
+        Extracts a lightweight, non-mutating snapshot representation of the adaptive map.
+
+        Uses index_tier, index_row, and index_col to determine actually represented
+        adaptive cells and avoid exposing duplicate cells from dense tier bounding boxes.
+        """
+        cells: List[Dict[str, Any]] = []
+        tier_counts: Dict[str, int] = {tier: 0 for tier in self.tier_resolutions}
+
+        for tier_name in self.available_tiers:
+            grid = self.tier_maps[tier_name]
+            mask = (self.index_tier == tier_name)
+            brs, bcs = np.where(mask)
+            if len(brs) == 0:
+                continue
+
+            frs = self.index_row[brs, bcs]
+            fcs = self.index_col[brs, bcs]
+
+            fine_coords = np.column_stack((frs, fcs))
+            unique_fine = np.unique(fine_coords, axis=0)
+            u_frs = unique_fine[:, 0]
+            u_fcs = unique_fine[:, 1]
+
+            point_counts = grid.point_count[u_frs, u_fcs]
+            occ = point_counts > 0
+            if not np.any(occ):
+                continue
+
+            valid_frs = u_frs[occ]
+            valid_fcs = u_fcs[occ]
+            counts = point_counts[occ]
+
+            min_zs = grid.min_z[valid_frs, valid_fcs]
+            max_zs = grid.max_z[valid_frs, valid_fcs]
+            mean_zs = grid.mean_z[valid_frs, valid_fcs]
+            mean_intensities = grid.mean_intensity[valid_frs, valid_fcs]
+
+            x_vals, y_vals = grid.grid_to_world(valid_frs, valid_fcs)
+            res = grid.resolution
+
+            num_valid = len(valid_frs)
+            tier_counts[tier_name] = num_valid
+
+            for k in range(num_valid):
+                mi = mean_intensities[k]
+                cells.append({
+                    "x": float(x_vals[k]),
+                    "y": float(y_vals[k]),
+                    "z": float(mean_zs[k]),
+                    "tier": str(tier_name),
+                    "resolution": float(res),
+                    "point_count": int(counts[k]),
+                    "min_z": float(min_zs[k]),
+                    "max_z": float(max_zs[k]),
+                    "mean_intensity": float(mi) if not np.isnan(mi) else None,
+                })
+
+        tiers_dict = {}
+        for tier_name, res in self.tier_resolutions.items():
+            tiers_dict[tier_name] = {
+                "resolution": float(res),
+                "cell_count": tier_counts.get(tier_name, 0),
+            }
+
+        frame_id = self.metadata.get("source_frame_id", None)
+
+        return {
+            "available": True,
+            "frame_id": frame_id,
+            "bounds": {
+                "min_x": float(self.min_x),
+                "max_x": float(self.max_x),
+                "min_y": float(self.min_y),
+                "max_y": float(self.max_y),
+            },
+            "base_resolution": float(self.base_resolution),
+            "represented_cells": len(cells),
+            "tiers": tiers_dict,
+            "cells": cells,
+        }
+
+
