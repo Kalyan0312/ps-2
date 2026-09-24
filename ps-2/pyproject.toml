@@ -6,8 +6,17 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "numpy",
-    "pydantic"
+    "pydantic",
+    "pyyaml",
+    "websockets",
+    "httpx"
 ]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra -q"
 
 [tool.vercel]
 entrypoint = "backend.api.main:app"
